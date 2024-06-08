@@ -1,7 +1,6 @@
 #include "helpers.h"
 #include <windows.h>
 #include <thread>
-#include <chrono>
 
 void *consoleHandle = nullptr;
 

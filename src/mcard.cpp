@@ -10,25 +10,26 @@ MagCard* MagCard::instance = nullptr;
 
 // Constructor
 MagCard::MagCard() : keyboardHook(nullptr) {
-    // Initialize static instance pointer to this instance
-    instance = this;
+    instance = this; // Assign this instance to the static pointer
 }
 
 // Destructor
 MagCard::~MagCard() {
     if (keyboardHook) {
-        UnhookWindowsHookEx(keyboardHook);
+        UnhookWindowsHookEx(keyboardHook); // Remove the keyboard hook
     }
 }
 
-// Initialize method
+// Initialize the MagCard
 bool MagCard::initialize() {
-    keyboardHook = SetWindowsHookEx(WH_KEYBOARD_LL, LowLevelKeyboardProc, NULL, 0);
-    if (keyboardHook == NULL) {
+    // Set up the low-level keyboard hook
+    keyboardHook = SetWindowsHookEx(WH_KEYBOARD_LL, LowLevelKeyboardProc, nullptr, 0);
+    if (keyboardHook == nullptr) {
         printError("%s, %s: Failed to install keyboard hook\n", __func__, module);
         return false;
     }
 
+    // Read QR data from files
     if (!readQrData()) {
         return false;
     }
@@ -36,110 +37,64 @@ bool MagCard::initialize() {
     return true;
 }
 
-// Static hook procedure
+// Static callback for low-level keyboard events
 LRESULT CALLBACK MagCard::LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
     if (nCode == HC_ACTION && wParam == WM_KEYDOWN) {
-        KBDLLHOOKSTRUCT *kbdStruct = (KBDLLHOOKSTRUCT*)lParam;
-        char key = (char)kbdStruct->vkCode;
+        auto* kbdStruct = reinterpret_cast<KBDLLHOOKSTRUCT*>(lParam);
+        char key = static_cast<char>(kbdStruct->vkCode);
 
-        // Forward the key event to the instance for processing
+        // Process numeric keys if the instance is valid
         if (key >= '0' && key <= '9' && instance) {
             instance->processKeyEvent(key);
         }
     }
 
-    // Call the next hook in the chain
-    return CallNextHookEx(NULL, nCode, wParam, lParam);
+    // Pass the event to the next hook in the chain
+    return CallNextHookEx(nullptr, nCode, wParam, lParam);
 }
 
-// Process key event method
+// Process individual key events
 void MagCard::processKeyEvent(char key) {
     auto now = std::chrono::steady_clock::now();
 
+    // Clear the sequence if the time threshold is exceeded
     if (!keySequence.empty()) {
-        // Calculate the time difference between the current and last key press
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastTimestamp);
-
-        // Check if the time difference exceeds the threshold
         if (duration.count() > time_threshold_ms) {
-            // Clear the sequence if the time threshold is exceeded
             keySequence.clear();
         }
     }
 
-    // Add the key press to the sequence and update the last timestamp
+    // Add the key to the sequence and update the timestamp
     keySequence.push_back(key);
     lastTimestamp = now;
 
-    // Check if we have enough key presses to evaluate
+    // Process the card number if the sequence is complete
     if (keySequence.size() >= card_number_length) {
-        // Convert the key sequence to a string
         std::string cardNumber(keySequence.begin(), keySequence.end());
+        keySequence.clear(); // Reset the sequence for the next card
 
-        // Clear the key sequence
-        keySequence.clear();
-
-        // Check cardNumber is in qr_serial_data, or qr_image_data or else, assume as Access Code
+        // Process the card number based on its type
         if (qr_serial_data.contains(cardNumber)) {
-            // Convert the QR data to a string
-            std::string qr_serial = qr_serial_data[cardNumber].dump();
-            // Strip the quotes from the string
-            qr_serial = qr_serial.substr(1, qr_serial.size() - 2);
-
-            printInfo("Card Type: %s\n", "qr_serial");
-            printInfo("QR Serial Data: %s\n", qr_serial.c_str());
-
-            // Write qr_serial to qr.dat
-            std::ofstream fp("qr.dat");
-            if (fp.is_open()) {
-                fp << qr_serial;
-                fp.close();
-            } else {
-                printError("%s, %s: Failed to open qr.dat\n", __func__, module);
-            }
-
-            // Press F4 key
-            pressKey(0x73);
+            processQrSerial(cardNumber);
         } else if (qr_image_data.contains(cardNumber)) {
-            // Convert the QR data to a string
-            std::string qr_image = qr_image_data[cardNumber].dump();
-            // Strip the quotes from the string
-            qr_image = qr_image.substr(1, qr_image.size() - 2);
-
-            printInfo("Card Type: %s\n", "qr_image");
-            printInfo("QR Image Data: %s\n", qr_image.c_str());
-
-            // Press F6 key
-            pressKey(0x75);
+            processQrImage(cardNumber);
         } else {
-            // Check if cardNumber begins with 20000
-            if (cardNumber.substr(0, 5) != "20000") {
-                printWarning("Invalid card number: %s\n", cardNumber.c_str());
-                return;
-            }
-
-            printInfo("Card Type: %s\n", "magnetic");
-            printInfo("Access Code: %s\n", cardNumber.c_str());
-
-            // Write the key sequence to cards.dat
-            std::ofstream fp("cards.dat");
-            if (fp.is_open()) {
-                fp << cardNumber;
-                fp.close();
-            } else {
-                printError("%s, %s: Failed to open cards.dat\n", __func__, module);
-            }
-
-            // Press F3 key
-            pressKey(0x72);
+            processAccessCode(cardNumber);
         }
     }
 }
 
+// Read QR data from the file
 bool MagCard::readQrData() {
-    // Read QR data from qr_data.json
+    // Attempt to read from qr_data.json
     nlohmann::json qrData;
     std::ifstream fp("qr_data.json");
+    if (!fp.is_open()) {
+        // Try reading from the plugins directory if the file is not found
+        fp.open("plugins/qr_data.json");
+    }
+
     if (fp.is_open()) {
         try {
             fp >> qrData;
@@ -150,24 +105,11 @@ bool MagCard::readQrData() {
         }
         fp.close();
     } else {
-        // Try plugins/qr_data.json
-        fp.open("plugins/qr_data.json");
-        if (fp.is_open()) {
-            try {
-                fp >> qrData;
-            } catch (nlohmann::json::parse_error& e) {
-                fp.close();
-                printError("%s, %s: Failed to parse plugins/qr_data.json: %s\n", __func__, module, e.what());
-                return false;
-            }
-            fp.close();
-        } else {
-            printError("%s, %s: Failed to open qr_data.json\n", __func__, module);
-            return false;
-        }
+        printError("%s, %s: Failed to open qr_data.json\n", __func__, module);
+        return false;
     }
 
-    // Check if qr_serial_data and qr_image_data are present
+    // Extract QR serial and image data
     if (qrData.contains("qr_serial_data")) {
         qr_serial_data = qrData["qr_serial_data"];
     } else {
@@ -183,4 +125,61 @@ bool MagCard::readQrData() {
     }
 
     return true;
+}
+
+// Process QR serial card type
+void MagCard::processQrSerial(const std::string& cardNumber) {
+    std::string qr_serial = qr_serial_data[cardNumber].dump();
+    qr_serial = qr_serial.substr(1, qr_serial.size() - 2); // Strip quotes
+
+    printInfo("Card Type: %s\n", "qr_serial");
+    printInfo("QR Serial Data: %s\n", qr_serial.c_str());
+
+    // Write the QR serial data to a file
+    std::ofstream fp("qr.dat");
+    if (fp.is_open()) {
+        fp << qr_serial;
+        fp.close();
+    } else {
+        printError("%s, %s: Failed to open qr.dat\n", __func__, module);
+    }
+
+    // Simulate pressing the F4 key
+    pressKey(0x73);
+}
+
+// Process QR image card type
+void MagCard::processQrImage(const std::string& cardNumber) {
+    std::string qr_image = qr_image_data[cardNumber].dump();
+    qr_image = qr_image.substr(1, qr_image.size() - 2); // Strip quotes
+
+    printInfo("Card Type: %s\n", "qr_image");
+    printInfo("QR Image Data: %s\n", qr_image.c_str());
+
+    // Simulate pressing the F6 key
+    pressKey(0x75);
+}
+
+// Process magnetic access code card type
+void MagCard::processAccessCode(const std::string& cardNumber) {
+    // Validate the card number prefix
+    if (cardNumber.substr(0, 5) != "20000") {
+        printWarning("Invalid card number: %s\n", cardNumber.c_str());
+        return;
+    }
+
+    printInfo("Card Type: %s\n", "magnetic");
+    printInfo("Access Code: %s\n", cardNumber.c_str());
+
+    // Write the access code to a file
+    std::ofstream fp("cards.dat");
+    if (fp.is_open()) {
+        fp << cardNumber;
+        fp.close();
+    } else {
+        printError("%s, %s: Failed to open cards.dat\n", __func__, module);
+    }
+
+    // Simulate pressing the F3 key
+    pressKey(0x72);
 }

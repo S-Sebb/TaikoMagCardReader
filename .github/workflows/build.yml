@@ -28,7 +28,7 @@ jobs:
         run: |
           mkdir bin
       - name: Copy to bin directory
-        run:
+        run: |
           copy build64\mcardreader.dll bin\mcardreader.dll
           copy dist\qr_code.json bin\qr_code.json
       - name: Archive bin directory

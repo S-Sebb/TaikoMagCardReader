@@ -1,0 +1,13 @@
+{
+    "qr_serial_data" : {
+        "2000000995": "gaiden_blue_10dan",
+        "2000000996": "gaiden_white_10dan",
+        "2000000997": "gaiden_2022_10dan",
+        "2000000998": "gaiden_2023_11dan",
+        "2000000994": "gaiden_blue_11dan",
+        "2000000993": "gaiden_purple_11dan"
+    },
+    "qr_image_data" : {
+        "2000000999": "APRIL2024_01"
+    }
+}

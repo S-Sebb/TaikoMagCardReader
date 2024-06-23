@@ -9,8 +9,9 @@ char module[] = "mcardreader";
 bool initialized = false;
 MagCard mcard;
 
-// Function to initialize the MagCardReader
-void InitializeMagCardReader() {
+extern "C" {
+// Exported function for DLL initialization
+__declspec(dllexport) void Init() {
     if (!initialized) {
         if (!mcard.initialize()) {
             printWarning("%s, %s: SmartCardReader not initialized\n", __func__, module);
@@ -21,8 +22,8 @@ void InitializeMagCardReader() {
     }
 }
 
-// Function to clean up and exit the MagCardReader
-void ExitMagCardReader() {
+// Exported function for DLL cleanup
+__declspec(dllexport) void Exit() {
     printInfo("%s, %s: Exiting MagCardReader\n", __func__, module);
 
     if (initialized) {
@@ -30,22 +31,11 @@ void ExitMagCardReader() {
         initialized = false;
     }
 
-    // Signal a named event to indicate the plugin exit
+    // Create and signal named event
     HANDLE hEvent = CreateEvent(nullptr, TRUE, FALSE, "PluginExitEvent");
     if (hEvent) {
         SetEvent(hEvent);
         CloseHandle(hEvent);
     }
-}
-
-extern "C" {
-// Exported function for DLL initialization
-__declspec(dllexport) void Init() {
-    InitializeMagCardReader();
-}
-
-// Exported function for DLL cleanup
-__declspec(dllexport) void Exit() {
-    ExitMagCardReader();
 }
 }
